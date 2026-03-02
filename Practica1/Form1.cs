@@ -10,6 +10,23 @@ namespace Practica1
 {
     public partial class Form1 : Form
     {
+        private class RegistroVariable
+        {
+            public string Nombre { get; set; }
+            public string Tipo { get; set; }
+            public string Ambito { get; set; }
+            public string ValorInicial { get; set; }
+            public int Linea { get; set; }
+        }
+
+        private class RegistroFuncion
+        {
+            public string Nombre { get; set; }
+            public string TipoRetorno { get; set; }
+            public string Parametros { get; set; }
+            public int CantidadParametros { get; set; }
+            public int Linea { get; set; }
+        }
 
         // Tabla de variables globales
         private Dictionary<string, (string tipo, bool esArreglo, int tam)> Variables = new Dictionary<string, (string, bool, int)>();
@@ -317,6 +334,128 @@ namespace Practica1
                 Rtbx_salida.AppendText("Análisis completado sin errores.\n");
             else
                 Rtbx_salida.AppendText($"\nAnálisis completado con {N_Error} errores.\n");
+            GenerarTablasDeElementos();
+        }
+        
+
+        
+
+        private void GenerarTablasDeElementos()
+        {
+            var variables = new List<RegistroVariable>();
+            var funciones = new List<RegistroFuncion>();
+            var ambitos = new Stack<string>();
+            ambitos.Push("global");
+
+            string[] lineas = richTextBox1.Text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+            for (int i = 0; i < lineas.Length; i++)
+            {
+                string lineaOriginal = lineas[i];
+                string linea = LimpiarLineaParaTabla(lineaOriginal);
+                if (string.IsNullOrWhiteSpace(linea)) continue;
+
+                var funcionMatch = Regex.Match(linea,
+                    @"^(?<tipo>int|float|double|char|bool|void|long|short)\s+(?<nombre>[A-Za-z_]\w*)\s*\((?<params>[^\)]*)\)\s*\{");
+
+                if (funcionMatch.Success)
+                {
+                    string nombreFuncion = funcionMatch.Groups["nombre"].Value;
+                    string parametros = funcionMatch.Groups["params"].Value.Trim();
+                    string[] listaParametros = string.IsNullOrWhiteSpace(parametros)
+                        ? new string[0]
+                        : parametros.Split(',').Select(p => p.Trim()).Where(p => p.Length > 0).ToArray();
+
+                    funciones.Add(new RegistroFuncion
+                    {
+                        Nombre = nombreFuncion,
+                        TipoRetorno = funcionMatch.Groups["tipo"].Value,
+                        Parametros = string.IsNullOrWhiteSpace(parametros) ? "sin parámetros" : parametros,
+                        CantidadParametros = listaParametros.Length,
+                        Linea = i + 1
+                    });
+
+                    foreach (string param in listaParametros)
+                    {
+                        var paramMatch = Regex.Match(param,
+                            @"^(?<tipo>int|float|double|char|bool|long|short)\s+(?<nombre>[A-Za-z_]\w*)(\[\])?$");
+
+                        if (paramMatch.Success)
+                        {
+                            variables.Add(new RegistroVariable
+                            {
+                                Nombre = paramMatch.Groups["nombre"].Value,
+                                Tipo = paramMatch.Groups["tipo"].Value,
+                                Ambito = nombreFuncion,
+                                ValorInicial = "parámetro",
+                                Linea = i + 1
+                            });
+                        }
+                    }
+
+                    ambitos.Push(nombreFuncion);
+                    continue;
+                }
+
+                var declaracionMatch = Regex.Match(linea,
+                    @"^(?<tipo>int|float|double|char|bool|long|short)\s+(?<resto>[^;]+);$");
+
+                if (declaracionMatch.Success)
+                {
+                    string tipo = declaracionMatch.Groups["tipo"].Value;
+                    string[] declaraciones = declaracionMatch.Groups["resto"].Value.Split(',');
+
+                    foreach (string declaracion in declaraciones)
+                    {
+                        string entrada = declaracion.Trim();
+                        if (string.IsNullOrWhiteSpace(entrada)) continue;
+
+                        var nombreMatch = Regex.Match(entrada, @"^(?<nombre>[A-Za-z_]\w*)(\s*=\s*(?<valor>.+))?$");
+                        if (!nombreMatch.Success) continue;
+
+                        variables.Add(new RegistroVariable
+                        {
+                            Nombre = nombreMatch.Groups["nombre"].Value,
+                            Tipo = tipo,
+                            Ambito = ambitos.Peek(),
+                            ValorInicial = nombreMatch.Groups["valor"].Success
+                                ? nombreMatch.Groups["valor"].Value.Trim()
+                                : "-",
+                            Linea = i + 1
+                        });
+                    }
+                }
+
+                int cierres = linea.Count(c => c == '}');
+                while (cierres > 0 && ambitos.Count > 1)
+                {
+                    ambitos.Pop();
+                    cierres--;
+                }
+            }
+
+            Rtbx_salida.AppendText("\n===== TABLA DE VARIABLES =====\n");
+            Rtbx_salida.AppendText("| Nombre | Tipo | Ámbito | Valor inicial | Línea |\n");
+            Rtbx_salida.AppendText("|---|---|---|---|---|\n");
+            foreach (var v in variables)
+            {
+                Rtbx_salida.AppendText($"| {v.Nombre} | {v.Tipo} | {v.Ambito} | {v.ValorInicial} | {v.Linea} |\n");
+            }
+
+            Rtbx_salida.AppendText("\n===== TABLA DE FUNCIONES =====\n");
+            Rtbx_salida.AppendText("| Nombre | Tipo de retorno | Parámetros | # parámetros | Línea |\n");
+            Rtbx_salida.AppendText("|---|---|---|---|---|\n");
+            foreach (var f in funciones)
+            {
+                Rtbx_salida.AppendText($"| {f.Nombre} | {f.TipoRetorno} | {f.Parametros} | {f.CantidadParametros} | {f.Linea} |\n");
+            }
+        }
+
+        private string LimpiarLineaParaTabla(string linea)
+        {
+            string sinComentarioLinea = Regex.Replace(linea, @"//.*$", "");
+            string sinComentariosBloque = Regex.Replace(sinComentarioLinea, @"/\*.*?\*/", "");
+            return sinComentariosBloque.Trim();
         }
 
         private int CountCharOutsideStrings(string line, char target)
