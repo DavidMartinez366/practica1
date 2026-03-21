@@ -28,19 +28,367 @@ namespace Practica1
             public int Linea { get; set; }
         }
 
+        private HashSet<int> LineasConExpresionAutonoma = new HashSet<int>();
+
+        private enum TipoTokenExpresion
+        {
+            Identificador,
+            Numero,
+            Cadena,
+            Caracter,
+            Booleano,
+            Operador,
+            ParentesisAbre,
+            ParentesisCierra,
+            CorcheteAbre,
+            CorcheteCierra,
+            Coma,
+            Fin
+        }
+
+        private class TokenExpresion
+        {
+            public TipoTokenExpresion Tipo { get; set; }
+            public string Valor { get; set; }
+            public int Posicion { get; set; }
+        }
+
+        private class ResultadoAnalisisExpresion
+        {
+            public bool EsValida { get; set; }
+            public string Error { get; set; }
+            public bool TieneOperadoresAritmeticos { get; set; }
+            public bool TieneOperadoresRelacionales { get; set; }
+            public bool TieneOperadoresLogicos { get; set; }
+            public bool TieneBooleanoLiteral { get; set; }
+        }
+
+        private class AnalizadorExpresiones
+        {
+            private readonly List<TokenExpresion> tokens;
+            private int indice;
+
+            public AnalizadorExpresiones(List<TokenExpresion> tokens)
+            {
+                this.tokens = tokens;
+            }
+
+            public ResultadoAnalisisExpresion Resultado { get; } = new ResultadoAnalisisExpresion();
+
+            public bool Analizar(out string error)
+            {
+                error = null;
+
+                if (tokens == null || tokens.Count == 0)
+                {
+                    error = "La expresión está vacía.";
+                    return false;
+                }
+
+                if (!ParseExpression())
+                {
+                    error = Resultado.Error ?? "Expresión inválida.";
+                    return false;
+                }
+
+                if (TokenActual().Tipo != TipoTokenExpresion.Fin)
+                {
+                    error = $"Token inesperado '{TokenActual().Valor}' en la posición {TokenActual().Posicion + 1}.";
+                    return false;
+                }
+
+                Resultado.EsValida = true;
+                return true;
+            }
+
+            private bool ParseExpression()
+            {
+                return ParseLogicalOr();
+            }
+
+            private bool ParseLogicalOr()
+            {
+                if (!ParseLogicalAnd()) return false;
+
+                while (CoincideOperador("||"))
+                {
+                    Resultado.TieneOperadoresLogicos = true;
+                    Avanzar();
+
+                    if (!ParseLogicalAnd())
+                    {
+                        return RegistrarError("Se esperaba una expresión después de '||'.");
+                    }
+                }
+
+                return true;
+            }
+
+            private bool ParseLogicalAnd()
+            {
+                if (!ParseEquality()) return false;
+
+                while (CoincideOperador("&&"))
+                {
+                    Resultado.TieneOperadoresLogicos = true;
+                    Avanzar();
+
+                    if (!ParseEquality())
+                    {
+                        return RegistrarError("Se esperaba una expresión después de '&&'.");
+                    }
+                }
+
+                return true;
+            }
+
+            private bool ParseEquality()
+            {
+                if (!ParseRelational()) return false;
+
+                while (CoincideOperador("==") || CoincideOperador("!="))
+                {
+                    Resultado.TieneOperadoresRelacionales = true;
+                    Avanzar();
+
+                    if (!ParseRelational())
+                    {
+                        return RegistrarError("Se esperaba una expresión de comparación válida.");
+                    }
+                }
+
+                return true;
+            }
+
+            private bool ParseRelational()
+            {
+                if (!ParseAdditive()) return false;
+
+                while (CoincideOperador("<") || CoincideOperador(">") || CoincideOperador("<=") || CoincideOperador(">="))
+                {
+                    Resultado.TieneOperadoresRelacionales = true;
+                    Avanzar();
+
+                    if (!ParseAdditive())
+                    {
+                        return RegistrarError("Se esperaba una expresión después del operador relacional.");
+                    }
+                }
+
+                return true;
+            }
+
+            private bool ParseAdditive()
+            {
+                if (!ParseMultiplicative()) return false;
+
+                while (CoincideOperador("+") || CoincideOperador("-"))
+                {
+                    Resultado.TieneOperadoresAritmeticos = true;
+                    Avanzar();
+
+                    if (!ParseMultiplicative())
+                    {
+                        return RegistrarError("Se esperaba un término después del operador aritmético.");
+                    }
+                }
+
+                return true;
+            }
+
+            private bool ParseMultiplicative()
+            {
+                if (!ParseUnary()) return false;
+
+                while (CoincideOperador("*") || CoincideOperador("/") || CoincideOperador("%"))
+                {
+                    Resultado.TieneOperadoresAritmeticos = true;
+                    Avanzar();
+
+                    if (!ParseUnary())
+                    {
+                        return RegistrarError("Se esperaba un factor después del operador aritmético.");
+                    }
+                }
+
+                return true;
+            }
+
+            private bool ParseUnary()
+            {
+                if (CoincideOperador("!") || CoincideOperador("+") || CoincideOperador("-") ||
+                    CoincideOperador("++") || CoincideOperador("--"))
+                {
+                    string operador = TokenActual().Valor;
+                    if (operador == "!")
+                        Resultado.TieneOperadoresLogicos = true;
+                    else
+                        Resultado.TieneOperadoresAritmeticos = true;
+
+                    Avanzar();
+                    return ParseUnary() || RegistrarError($"Se esperaba una expresión después de '{operador}'.");
+                }
+
+                return ParsePostfix();
+            }
+
+            private bool ParsePostfix()
+            {
+                if (!ParsePrimary()) return false;
+
+                while (true)
+                {
+                    if (Coincide(TipoTokenExpresion.ParentesisAbre))
+                    {
+                        Avanzar();
+
+                        if (!Coincide(TipoTokenExpresion.ParentesisCierra))
+                        {
+                            do
+                            {
+                                if (!ParseExpression())
+                                {
+                                    return RegistrarError("Argumento inválido en la llamada a función.");
+                                }
+                            }
+                            while (ConsumirSiEs(TipoTokenExpresion.Coma));
+                        }
+
+                        if (!ConsumirSiEs(TipoTokenExpresion.ParentesisCierra))
+                        {
+                            return RegistrarError("Falta ')' en la llamada a función.");
+                        }
+
+                        continue;
+                    }
+
+                    if (Coincide(TipoTokenExpresion.CorcheteAbre))
+                    {
+                        Avanzar();
+
+                        if (!ParseExpression())
+                        {
+                            return RegistrarError("Índice inválido dentro de los corchetes.");
+                        }
+
+                        if (!ConsumirSiEs(TipoTokenExpresion.CorcheteCierra))
+                        {
+                            return RegistrarError("Falta ']' en el acceso al arreglo.");
+                        }
+
+                        continue;
+                    }
+
+                    if (CoincideOperador("++") || CoincideOperador("--"))
+                    {
+                        Resultado.TieneOperadoresAritmeticos = true;
+                        Avanzar();
+                        continue;
+                    }
+
+                    break;
+                }
+
+                return true;
+            }
+
+            private bool ParsePrimary()
+            {
+                TokenExpresion actual = TokenActual();
+
+                if (actual.Tipo == TipoTokenExpresion.Numero ||
+                    actual.Tipo == TipoTokenExpresion.Identificador ||
+                    actual.Tipo == TipoTokenExpresion.Cadena ||
+                    actual.Tipo == TipoTokenExpresion.Caracter)
+                {
+                    Avanzar();
+                    return true;
+                }
+
+                if (actual.Tipo == TipoTokenExpresion.Booleano)
+                {
+                    Resultado.TieneBooleanoLiteral = true;
+                    Avanzar();
+                    return true;
+                }
+
+                if (ConsumirSiEs(TipoTokenExpresion.ParentesisAbre))
+                {
+                    if (!ParseExpression())
+                    {
+                        return RegistrarError("La subexpresión entre paréntesis es inválida.");
+                    }
+
+                    if (!ConsumirSiEs(TipoTokenExpresion.ParentesisCierra))
+                    {
+                        return RegistrarError("Falta ')' para cerrar la subexpresión.");
+                    }
+
+                    return true;
+                }
+
+                return RegistrarError($"Se encontró '{actual.Valor}' donde se esperaba un operando.");
+            }
+
+            private TokenExpresion TokenActual()
+            {
+                return indice < tokens.Count ? tokens[indice] : tokens[tokens.Count - 1];
+            }
+
+            private void Avanzar()
+            {
+                if (indice < tokens.Count)
+                {
+                    indice++;
+                }
+            }
+
+            private bool Coincide(TipoTokenExpresion tipo)
+            {
+                return TokenActual().Tipo == tipo;
+            }
+
+            private bool CoincideOperador(string operador)
+            {
+                return TokenActual().Tipo == TipoTokenExpresion.Operador && TokenActual().Valor == operador;
+            }
+
+            private bool ConsumirSiEs(TipoTokenExpresion tipo)
+            {
+                if (!Coincide(tipo))
+                {
+                    return false;
+                }
+
+                Avanzar();
+                return true;
+            }
+
+            private bool RegistrarError(string mensaje)
+            {
+                if (string.IsNullOrWhiteSpace(Resultado.Error))
+                {
+                    Resultado.Error = mensaje;
+                }
+
+                return false;
+            }
+        }
+
+
         // Tabla de variables globales
         private Dictionary<string, (string tipo, bool esArreglo, int tam)> Variables = new Dictionary<string, (string, bool, int)>();
 
-       
+        private HashSet<string> FuncionesDeclaradas = new HashSet<string>();
         private List<string> TiposValidos = new List<string>
         {
             "int", "float", "double", "char", "bool", "long", "short", "void"
         };
 
-       
+
         private List<string> Directivas = new List<string> { "include", "define" };
 
-        
+
         private List<string> P_Reservadas = new List<string>
         {
             "int", "float", "return", "if", "else", "while", "for", "char", "void", "double",
@@ -52,7 +400,7 @@ namespace Practica1
             "nullptr", "printf", "constexpr", "decltype", "static_assert","<condicion>"
         };
 
-        
+
         private Dictionary<string, string> Traducciones = new Dictionary<string, string>
         {
             { "int", "entero" },
@@ -199,11 +547,14 @@ namespace Practica1
             Leer = new StreamReader(archivo);
             Escribir = new StreamWriter(archivoBack);
 
-            
+
             string[] lineas = File.ReadAllLines(archivo);
             Variables.Clear();
+            LineasConExpresionAutonoma.Clear();
 
-            
+           
+
+
             DentroComentarioBloque = false;
             int nivelBloque = 0;
 
@@ -212,7 +563,7 @@ namespace Practica1
                 string original = linea;
                 string lineaProcesable = linea;
 
-                
+
                 if (DentroComentarioBloque)
                 {
                     int idxCierre = lineaProcesable.IndexOf("*/");
@@ -228,7 +579,7 @@ namespace Practica1
                     }
                 }
 
-                
+
                 int idxLineComment = lineaProcesable.IndexOf("//");
                 int idxBlockStart = lineaProcesable.IndexOf("/*");
 
@@ -254,7 +605,7 @@ namespace Practica1
                     }
                 }
 
-                
+
                 lineaProcesable = lineaProcesable.Trim();
                 if (string.IsNullOrWhiteSpace(lineaProcesable))
                 {
@@ -262,7 +613,7 @@ namespace Practica1
                     continue;
                 }
 
-                
+
                 if (lineaProcesable.StartsWith("#") || lineaProcesable.StartsWith("case ") || lineaProcesable.StartsWith("default:") || lineaProcesable == "default")
                 {
                     Numero_Linea++;
@@ -274,6 +625,14 @@ namespace Practica1
                 {
                     nivelBloque -= numClose;
                     if (nivelBloque < 0) nivelBloque = 0;
+                }
+
+                if (EsExpresionAutonoma(lineaProcesable, nivelBloque))
+                {
+                    LineasConExpresionAutonoma.Add(Numero_Linea);
+                    ValidarExpresionAutonoma(lineaProcesable);
+                    Numero_Linea++;
+                    continue;
                 }
 
                 DetectarDeclaraciones(lineaProcesable);
@@ -331,14 +690,19 @@ namespace Practica1
             Leer.Close();
 
             if (N_Error == 0)
+            {
                 Rtbx_salida.AppendText("Análisis completado sin errores.\n");
+            }
             else
+            {
                 Rtbx_salida.AppendText($"\nAnálisis completado con {N_Error} errores.\n");
+                
+               
+            }
             GenerarTablasDeElementos();
+            Rtbx_salida.SelectionStart = Rtbx_salida.TextLength;
+            Rtbx_salida.ScrollToCaret();
         }
-        
-
-        
 
         private void GenerarTablasDeElementos()
         {
@@ -356,7 +720,7 @@ namespace Practica1
                 if (string.IsNullOrWhiteSpace(linea)) continue;
 
                 var funcionMatch = Regex.Match(linea,
-                    @"^(?<tipo>int|float|double|char|bool|void|long|short)\s+(?<nombre>[A-Za-z_]\w*)\s*\((?<params>[^\)]*)\)\s*\{");
+                   @"^(?<tipo>int|float|double|char|bool|void|long|short)\s+(?<nombre>[A-Za-z_]\w*)\s*\((?<params>[^\)]*)\)\s*(\{)?$");
 
                 if (funcionMatch.Success)
                 {
@@ -378,7 +742,7 @@ namespace Practica1
                     foreach (string param in listaParametros)
                     {
                         var paramMatch = Regex.Match(param,
-                            @"^(?<tipo>int|float|double|char|bool|long|short)\s+(?<nombre>[A-Za-z_]\w*)(\[\])?$");
+                            @"^(?<tipo>int|float|double|char|bool|long|short)\s+(\*\s*)?(?<nombre>[A-Za-z_]\w*)(\[\])?$");
 
                         if (paramMatch.Success)
                         {
@@ -437,17 +801,31 @@ namespace Practica1
             Rtbx_salida.AppendText("\n===== TABLA DE VARIABLES =====\n");
             Rtbx_salida.AppendText("| Nombre | Tipo | Ámbito | Valor inicial | Línea |\n");
             Rtbx_salida.AppendText("|---|---|---|---|---|\n");
-            foreach (var v in variables)
+            if (variables.Count == 0)
             {
-                Rtbx_salida.AppendText($"| {v.Nombre} | {v.Tipo} | {v.Ambito} | {v.ValorInicial} | {v.Linea} |\n");
+                Rtbx_salida.AppendText("| (sin variables detectadas) | - | - | - | - |\n");
+            }
+            else
+            {
+                foreach (var v in variables)
+                {
+                    Rtbx_salida.AppendText($"| {v.Nombre} | {v.Tipo} | {v.Ambito} | {v.ValorInicial} | {v.Linea} |\n");
+                }
             }
 
             Rtbx_salida.AppendText("\n===== TABLA DE FUNCIONES =====\n");
             Rtbx_salida.AppendText("| Nombre | Tipo de retorno | Parámetros | # parámetros | Línea |\n");
             Rtbx_salida.AppendText("|---|---|---|---|---|\n");
-            foreach (var f in funciones)
+            if (funciones.Count == 0)
             {
-                Rtbx_salida.AppendText($"| {f.Nombre} | {f.TipoRetorno} | {f.Parametros} | {f.CantidadParametros} | {f.Linea} |\n");
+                Rtbx_salida.AppendText("| (sin funciones detectadas) | - | - | - | - |\n");
+            }
+            else
+            {
+                foreach (var f in funciones)
+                {
+                    Rtbx_salida.AppendText($"| {f.Nombre} | {f.TipoRetorno} | {f.Parametros} | {f.CantidadParametros} | {f.Linea} |\n");
+                }
             }
         }
 
@@ -722,21 +1100,35 @@ namespace Practica1
         {
             linea = linea.Trim();
 
-            
+
             foreach (var tipos in P_Reservadas)
             {
                 if (linea.StartsWith(tipos + " "))
                     return;
             }
 
-            
+
             if (!linea.Contains("=") || !linea.EndsWith(";"))
                 return;
 
             string izquierda = linea.Substring(0, linea.IndexOf("=")).Trim();
             string derecha = linea.Substring(linea.IndexOf("=") + 1).Trim().TrimEnd(';').Trim();
 
-                
+      
+
+
+            ResultadoAnalisisExpresion analisisExpresion = null;
+            if (!EsCadena(derecha) && !EsCaracter(derecha))
+            {
+                analisisExpresion = AnalizarExpresion(derecha);
+                if (!analisisExpresion.EsValida && !EsConstanteNumerica(derecha))
+                {
+                    ErrorSintactico($"Expresión inválida en la asignación de '{izquierda}': {analisisExpresion.Error}");
+                    return;
+                }
+            }
+
+
             if (!Variables.ContainsKey(izquierda))
             {
                 ErrorTexto($"Asignación a variable no declarada '{izquierda}' en línea {Numero_Linea}.");
@@ -764,6 +1156,7 @@ namespace Practica1
             {
                 ValidarCaracter(tipo, derecha);
             }
+
             else if (EsExpresionAritmetica(derecha))
             {
                 ValidarExpresionAritmetica(tipo, derecha);
@@ -772,14 +1165,15 @@ namespace Practica1
             {
                 ValidarExpresionLogica(tipo, derecha);
             }
-            else if (Regex.IsMatch(derecha, @"^[A-Za-z_]\w*\s*\(.*\)$"))
+            else if ((analisisExpresion != null && analisisExpresion.EsValida) || Regex.IsMatch(derecha, @"^[A-Za-z_]\w*\s*\(.*\)$"))
             {
-                // Es llamada a función, se acepta como válida
+                // La expresión ya fue validada sintácticamente o corresponde a una llamada a función.
             }
             else
             {
                 ErrorTexto($"Expresión no reconocida en la asignación de '{izquierda}' en línea {Numero_Linea}.");
             }
+
         }
         private bool EsConstanteNumerica(string s)
         {
@@ -795,15 +1189,230 @@ namespace Practica1
         {
             return s.Length == 3 && s.StartsWith("'") && s.EndsWith("'");
         }
+        // Analiza la sintaxis completa de una expresión y devuelve el resultado detallado de su validación.
+        private ResultadoAnalisisExpresion AnalizarExpresion(string expresion)
+        {
+            var resultado = new ResultadoAnalisisExpresion();
+
+            if (string.IsNullOrWhiteSpace(expresion))
+            {
+                resultado.Error = "La expresión está vacía.";
+                return resultado;
+            }
+
+            List<TokenExpresion> tokens = TokenizarExpresion(expresion, out string errorTokenizacion);
+            if (!string.IsNullOrWhiteSpace(errorTokenizacion))
+            {
+                resultado.Error = errorTokenizacion;
+                return resultado;
+            }
+
+            var parser = new AnalizadorExpresiones(tokens);
+            if (!parser.Analizar(out string errorAnalisis))
+            {
+                resultado.Error = errorAnalisis;
+                return resultado;
+            }
+
+            return parser.Resultado;
+        }
+
+        // Convierte una expresión de texto en tokens para que el analizador sintáctico pueda recorrerla.
+        private List<TokenExpresion> TokenizarExpresion(string expresion, out string error)
+        {
+            var tokens = new List<TokenExpresion>();
+            error = null;
+
+            for (int i = 0; i < expresion.Length; i++)
+            {
+                char actual = expresion[i];
+
+                if (char.IsWhiteSpace(actual))
+                {
+                    continue;
+                }
+
+                if (char.IsLetter(actual) || actual == '_')
+                {
+                    int inicio = i;
+                    while (i + 1 < expresion.Length && (char.IsLetterOrDigit(expresion[i + 1]) || expresion[i + 1] == '_'))
+                    {
+                        i++;
+                    }
+
+                    string valor = expresion.Substring(inicio, i - inicio + 1);
+                    tokens.Add(new TokenExpresion
+                    {
+                        Tipo = (valor == "true" || valor == "false") ? TipoTokenExpresion.Booleano : TipoTokenExpresion.Identificador,
+                        Valor = valor,
+                        Posicion = inicio
+                    });
+                    continue;
+                }
+
+                if (char.IsDigit(actual))
+                {
+                    int inicio = i;
+                    bool tienePunto = false;
+
+                    while (i + 1 < expresion.Length)
+                    {
+                        char siguiente = expresion[i + 1];
+                        if (char.IsDigit(siguiente))
+                        {
+                            i++;
+                            continue;
+                        }
+
+                        if (siguiente == '.' && !tienePunto)
+                        {
+                            tienePunto = true;
+                            i++;
+                            continue;
+                        }
+
+                        break;
+                    }
+
+                    tokens.Add(new TokenExpresion
+                    {
+                        Tipo = TipoTokenExpresion.Numero,
+                        Valor = expresion.Substring(inicio, i - inicio + 1),
+                        Posicion = inicio
+                    });
+                    continue;
+                }
+
+                if (actual == '"')
+                {
+                    int inicio = i;
+                    bool escape = false;
+                    i++;
+
+                    while (i < expresion.Length)
+                    {
+                        if (!escape && expresion[i] == '"')
+                        {
+                            break;
+                        }
+
+                        escape = !escape && expresion[i] == '\\';
+                        i++;
+                    }
+
+                    if (i >= expresion.Length || expresion[i] != '"')
+                    {
+                        error = $"Cadena sin cerrar en la posición {inicio + 1}.";
+                        return tokens;
+                    }
+
+                    tokens.Add(new TokenExpresion
+                    {
+                        Tipo = TipoTokenExpresion.Cadena,
+                        Valor = expresion.Substring(inicio, i - inicio + 1),
+                        Posicion = inicio
+                    });
+                    continue;
+                }
+
+                if (actual == '\'')
+                {
+                    int inicio = i;
+                    bool escape = false;
+                    i++;
+
+                    while (i < expresion.Length)
+                    {
+                        if (!escape && expresion[i] == '\'')
+                        {
+                            break;
+                        }
+
+                        escape = !escape && expresion[i] == '\\';
+                        i++;
+                    }
+
+                    if (i >= expresion.Length || expresion[i] != '\'')
+                    {
+                        error = $"Caracter sin cerrar en la posición {inicio + 1}.";
+                        return tokens;
+                    }
+
+                    tokens.Add(new TokenExpresion
+                    {
+                        Tipo = TipoTokenExpresion.Caracter,
+                        Valor = expresion.Substring(inicio, i - inicio + 1),
+                        Posicion = inicio
+                    });
+                    continue;
+                }
+
+                string operadorDoble = i + 1 < expresion.Length ? expresion.Substring(i, 2) : string.Empty;
+                if (new[] { "&&", "||", "==", "!=", "<=", ">=", "++", "--" }.Contains(operadorDoble))
+                {
+                    tokens.Add(new TokenExpresion
+                    {
+                        Tipo = TipoTokenExpresion.Operador,
+                        Valor = operadorDoble,
+                        Posicion = i
+                    });
+                    i++;
+                    continue;
+                }
+
+                if ("+-*/%!<>".Contains(actual))
+                {
+                    tokens.Add(new TokenExpresion
+                    {
+                        Tipo = TipoTokenExpresion.Operador,
+                        Valor = actual.ToString(),
+                        Posicion = i
+                    });
+                    continue;
+                }
+
+                if (actual == '(' || actual == ')' || actual == '[' || actual == ']' || actual == ',')
+                {
+                    tokens.Add(new TokenExpresion
+                    {
+                        Tipo = actual == '(' ? TipoTokenExpresion.ParentesisAbre :
+                               actual == ')' ? TipoTokenExpresion.ParentesisCierra :
+                               actual == '[' ? TipoTokenExpresion.CorcheteAbre :
+                               actual == ']' ? TipoTokenExpresion.CorcheteCierra :
+                               TipoTokenExpresion.Coma,
+                        Valor = actual.ToString(),
+                        Posicion = i
+                    });
+                    continue;
+                }
+
+                error = $"Símbolo no válido '{actual}' en la posición {i + 1}.";
+                return tokens;
+            }
+
+            tokens.Add(new TokenExpresion
+            {
+                Tipo = TipoTokenExpresion.Fin,
+                Valor = "<fin>",
+                Posicion = expresion.Length
+            });
+
+            return tokens;
+        }
+
+        // Determina si una expresión tiene sintaxis correcta y si pertenece al dominio aritmético.
 
         private bool EsExpresionAritmetica(string s)
         {
-            return System.Text.RegularExpressions.Regex.IsMatch(s, @"^[0-9A-Za-z_\+\-\*\/\(\) ]+$");
+            ResultadoAnalisisExpresion resultado = AnalizarExpresion(s);
+            return resultado.EsValida && !resultado.TieneOperadoresLogicos && !resultado.TieneOperadoresRelacionales && !resultado.TieneBooleanoLiteral;
         }
 
+        // Determina si una expresión tiene sintaxis correcta y contiene operadores o literales lógicos.
         private bool EsExpresionLogica(string s)
         {
-            return s.Contains("==") || s.Contains(">") || s.Contains("<") || s.Contains("&&") || s.Contains("||");
+            ResultadoAnalisisExpresion resultado = AnalizarExpresion(s);
+            return resultado.EsValida && (resultado.TieneOperadoresLogicos || resultado.TieneOperadoresRelacionales || resultado.TieneBooleanoLiteral);
         }
 
         private void ValidarConstanteNumerica(string tipo, string valor)
@@ -827,6 +1436,21 @@ namespace Practica1
             if (tipo != "char")
                 ErrorTexto($"Solo variables tipo char pueden recibir caracteres. Tipo actual: '{tipo}'. Línea {Numero_Linea}.");
         }
+        private void ValidarAsignacionDesdeVariable(string tipoDestino, string nombreOrigen)
+        {
+            if (!Variables.ContainsKey(nombreOrigen))
+            {
+                ErrorTexto($"La variable '{nombreOrigen}' no está declarada (línea {Numero_Linea}).");
+                return;
+            }
+
+            var (tipoOrigen, _, _) = Variables[nombreOrigen];
+            if (tipoDestino != tipoOrigen)
+            {
+                ErrorTexto($"Tipos incompatibles en asignación: no se puede asignar '{tipoOrigen}' a '{tipoDestino}' (línea {Numero_Linea}).");
+            }
+        }
+
 
         private void ValidarExpresionAritmetica(string tipo, string expr)
         {
@@ -839,6 +1463,154 @@ namespace Practica1
             if (tipo != "bool" && tipo != "int")
                 ErrorTexto($"Expresión lógica incompatible con tipo '{tipo}' en línea {Numero_Linea}.");
         }
+
+        // Valida la estructura de las tres secciones de un ciclo for separando inicio, condición e incremento.
+        private void ValidarExpresionFor(string contenido)
+        {
+            List<string> segmentos = SepararPorDelimitadorSuperior(contenido, ';');
+            if (segmentos.Count != 3)
+            {
+                ErrorSintactico("La estructura 'for' debe contener exactamente inicio; condición; incremento.");
+                return;
+            }
+
+            if (!ComponenteForValido(segmentos[0], true, "inicialización")) return;
+
+            string condicion = segmentos[1].Trim();
+            if (!string.IsNullOrWhiteSpace(condicion))
+            {
+                ResultadoAnalisisExpresion analisisCondicion = AnalizarExpresion(condicion);
+                if (!analisisCondicion.EsValida)
+                {
+                    ErrorSintactico($"La condición del 'for' es inválida: {analisisCondicion.Error}");
+                    return;
+                }
+            }
+
+            if (!ComponenteForValido(segmentos[2], false, "incremento")) return;
+        }
+
+        // Verifica si una sección individual del for es una declaración, asignación o expresión sintácticamente correcta.
+        private bool ComponenteForValido(string componente, bool permitirDeclaracion, string nombreComponente)
+        {
+            string texto = componente.Trim();
+            if (string.IsNullOrWhiteSpace(texto))
+            {
+                return true;
+            }
+
+            if (permitirDeclaracion && TiposValidos.Any(tipo => Regex.IsMatch(texto, $@"^{tipo}\s+[A-Za-z_]\w*(\s*=\s*.+)?$")))
+            {
+                return true;
+            }
+
+            int indiceAsignacion = EncontrarAsignacionSimple(texto);
+            if (indiceAsignacion >= 0)
+            {
+                string izquierda = texto.Substring(0, indiceAsignacion).Trim();
+                string derecha = texto.Substring(indiceAsignacion + 1).Trim();
+
+                if (!Regex.IsMatch(izquierda, @"^[A-Za-z_]\w*(\s*\[[^\]]+\])?$"))
+                {
+                    ErrorSintactico($"La {nombreComponente} del 'for' tiene un lado izquierdo inválido.");
+                    return false;
+                }
+
+                ResultadoAnalisisExpresion analisisAsignacion = AnalizarExpresion(derecha);
+                if (!analisisAsignacion.EsValida)
+                {
+                    ErrorSintactico($"La {nombreComponente} del 'for' es inválida: {analisisAsignacion.Error}");
+                    return false;
+                }
+
+                return true;
+            }
+
+            ResultadoAnalisisExpresion analisis = AnalizarExpresion(texto);
+            if (!analisis.EsValida)
+            {
+                ErrorSintactico($"La {nombreComponente} del 'for' es inválida: {analisis.Error}");
+                return false;
+            }
+
+            return true;
+        }
+
+        // Divide una cadena por un delimitador sólo cuando éste aparece fuera de paréntesis, corchetes y literales.
+        private List<string> SepararPorDelimitadorSuperior(string texto, char delimitador)
+        {
+            var partes = new List<string>();
+            int inicio = 0;
+            int nivelParentesis = 0;
+            int nivelCorchetes = 0;
+            bool enCadena = false;
+            bool enCaracter = false;
+            bool escape = false;
+
+            for (int i = 0; i < texto.Length; i++)
+            {
+                char actual = texto[i];
+
+                if ((enCadena || enCaracter) && !escape && actual == '\\')
+                {
+                    escape = true;
+                    continue;
+                }
+
+                if (enCadena && !escape && actual == '"')
+                {
+                    enCadena = false;
+                }
+                else if (enCaracter && !escape && actual == '\'')
+                {
+                    enCaracter = false;
+                }
+                else if (!enCadena && !enCaracter)
+                {
+                    if (actual == '"') enCadena = true;
+                    else if (actual == '\'') enCaracter = true;
+                    else if (actual == '(') nivelParentesis++;
+                    else if (actual == ')') nivelParentesis--;
+                    else if (actual == '[') nivelCorchetes++;
+                    else if (actual == ']') nivelCorchetes--;
+                    else if (actual == delimitador && nivelParentesis == 0 && nivelCorchetes == 0)
+                    {
+                        partes.Add(texto.Substring(inicio, i - inicio));
+                        inicio = i + 1;
+                    }
+                }
+
+                if (escape)
+                {
+                    escape = false;
+                }
+            }
+
+            partes.Add(texto.Substring(inicio));
+            return partes;
+        }
+
+        // Encuentra el operador '=' de asignación evitando confundirlo con '==', '<=', '>=' o '!='.
+        private int EncontrarAsignacionSimple(string texto)
+        {
+            for (int i = 0; i < texto.Length; i++)
+            {
+                if (texto[i] != '=') continue;
+
+                char anterior = i > 0 ? texto[i - 1] : '\0';
+                char siguiente = i + 1 < texto.Length ? texto[i + 1] : '\0';
+
+                if (anterior == '=' || anterior == '!' || anterior == '<' || anterior == '>' || siguiente == '=')
+                {
+                    continue;
+                }
+
+                return i;
+            }
+
+            return -1;
+        }
+
 
 
         private void Error(int caracter)
@@ -867,7 +1639,7 @@ namespace Practica1
 
         private void ErrorTexto(string mensaje)
         {
-            ErrorSemantico(mensaje); 
+            ErrorSemantico(mensaje);
         }
 
         private void ValidarEstructurasControl(string linea)
@@ -900,24 +1672,36 @@ namespace Practica1
                 return;
             }
 
-            if (palabraReservada != "for")
+            if (palabraReservada == "for")
             {
-                // Si no parece una expresión lógica válida
-                if (!EsExpresionLogica(contenido) && !Variables.ContainsKey(contenido) && !bool.TryParse(contenido, out _))
-                {
-                    bool esVariableBool = false;
-                    if (Variables.ContainsKey(contenido))
-                    {
-                        if (Variables[contenido].tipo == "bool" || Variables[contenido].tipo == "int") esVariableBool = true;
-                    }
+                ValidarExpresionFor(contenido);
+                return;
+            }
 
-                    if (!esVariableBool)
-                    {
-                        ErrorSemantico($"La condición del '{palabraReservada}' espera una expresión lógica o booleana. Encontrado: '{contenido}'.");
-                    }
+            ResultadoAnalisisExpresion analisis = AnalizarExpresion(contenido);
+            if (!analisis.EsValida)
+            {
+                ErrorSintactico($"La condición del '{palabraReservada}' es inválida: {analisis.Error}");
+                return;
+            }
+
+            if (!EsExpresionLogica(contenido) && !Variables.ContainsKey(contenido) && !bool.TryParse(contenido, out _))
+            
+                {
+                bool esVariableBool = false;
+                if (Variables.ContainsKey(contenido))
+                {
+                    if (Variables[contenido].tipo == "bool" || Variables[contenido].tipo == "int") esVariableBool = true;
+                }
+
+
+                if (!esVariableBool)
+                {
+                    ErrorSemantico($"La condición del '{palabraReservada}' espera una expresión lógica o booleana. Encontrado: '{contenido}'.");
+                }
                 }
             }
-        }
+        
 
         private void DetectarDeclaraciones(string linea)
         {
@@ -933,20 +1717,20 @@ namespace Practica1
                 return;
             }
 
-            // Validar ; final
-            bool esCabeceraFuncion = linea.Contains("(") && linea.EndsWith(")");
-            bool esBloque = linea.EndsWith("{") || linea.EndsWith("}");
-
-            // Si es cabecera de función, validarla aparte
-            if (esCabeceraFuncion)
+            // Detectar cabecera/definición de función y registrar parámetros para el análisis semántico.
+            if (linea.Contains("(") && (linea.EndsWith(")") || linea.EndsWith("{")))
             {
-                DetectarDefinicionFuncion(linea);
-                return;
+                if (DetectarDefinicionFuncion(linea))
+                {
+                    return;
+                }
             }
+            // Validar ; final
+            bool esBloque = linea.EndsWith("{") || linea.EndsWith("}");
 
 
             // exige si no es función, ni bloque, ni estructura de control
-            if (!esCabeceraFuncion && !esBloque && !linea.EndsWith(";"))
+            if (!esBloque && !linea.EndsWith(";"))
             {
                 ErrorSintactico("Falta ';' al final de la sentencia.");
             }
@@ -957,7 +1741,7 @@ namespace Practica1
                 if (Regex.IsMatch(linea, $@"^{tipo}\s+") || linea.StartsWith(tipo + "[]"))
                 {
                     string resto = linea.Substring(tipo.Length).Trim();
-                
+
                     //  Arreglos
                     if (resto.Contains("["))
                     {
@@ -1051,10 +1835,18 @@ namespace Practica1
 
         private void VerificarUsoVariable(string token, char siguiente)
         {
+            if (LineasConExpresionAutonoma.Contains(Numero_Linea))
+            {
+                return;
+            }
+
             if (!P_Reservadas.Contains(token)) // no verificar palabras reservadas
             {
                 // si el siguiente es '(' probablemente sea una llamada o definición de función
                 if (siguiente == '(') return;
+
+                // si el identificador ya fue registrado como función, no se valida como variable
+                if (FuncionesDeclaradas.Contains(token)) return;
 
                 // si el token parece una constante numérica o literal, salta
                 if (int.TryParse(token, out _) || float.TryParse(token, out _)) return;
@@ -1108,6 +1900,52 @@ namespace Practica1
                 errores.Add("Error: Uso incorrecto de <condicion>.");
 
             return errores;
+        }
+
+        // Determina si una línea debe tratarse como una expresión aislada y no como una sentencia de C que requiera ';'.
+        private bool EsExpresionAutonoma(string linea, int nivelBloque)
+        {
+            string contenido = linea.Trim();
+
+            if (nivelBloque != 0 || string.IsNullOrWhiteSpace(contenido))
+            {
+                return false;
+            }
+
+            if (contenido.EndsWith(";") || contenido.EndsWith("{") || contenido.EndsWith("}"))
+            {
+                return false;
+            }
+
+            if (contenido.StartsWith("#") || contenido.StartsWith("if") || contenido.StartsWith("while") ||
+                contenido.StartsWith("for") || contenido.StartsWith("switch") || contenido.StartsWith("case ") ||
+                contenido.StartsWith("default:") || contenido == "default")
+            {
+                return false;
+            }
+
+            if (TiposValidos.Any(tipo => Regex.IsMatch(contenido, $@"^{tipo}\s+")))
+            {
+                return false;
+            }
+
+            if (EncontrarAsignacionSimple(contenido) >= 0)
+            {
+                return false;
+            }
+
+            ResultadoAnalisisExpresion analisis = AnalizarExpresion(contenido);
+            return analisis.EsValida;
+        }
+
+        // Ejecuta la validación sintáctica de una expresión suelta y reporta sólo errores propios del parser de expresiones.
+        private void ValidarExpresionAutonoma(string linea)
+        {
+            ResultadoAnalisisExpresion analisis = AnalizarExpresion(linea);
+            if (!analisis.EsValida)
+            {
+                ErrorSintactico($"La expresión es inválida: {analisis.Error}");
+            }
         }
 
 
@@ -1266,53 +2104,72 @@ namespace Practica1
                 return;
             }
         }
-        private void DetectarDefinicionFuncion(string linea)
+        private bool DetectarDefinicionFuncion(string linea)
         {
             linea = linea.Trim();
 
-            // Debe terminar en ')'
-            if (!linea.Contains("(") || !linea.EndsWith(")"))
-                return;
+            if (!linea.Contains("("))
+                return false;
 
-            // Expresión regular para validar estructura
+
             var match = Regex.Match(linea,
-                @"^(int|float|double|char|bool|void|string)\s+([A-Za-z_]\w*)\s*\((.*)\)$");
+                @"^(int|float|double|char|bool|void|string|long|short)\s+([A-Za-z_]\w*)\s*\((.*)\)\s*(\{)?$");
 
             if (!match.Success)
             {
-                ErrorSintactico("Definición de función mal formada.");
-                return;
+                return false;
             }
 
             string tipoRetorno = match.Groups[1].Value;
             string nombreFuncion = match.Groups[2].Value;
             string parametros = match.Groups[3].Value;
 
+            FuncionesDeclaradas.Add(nombreFuncion);
             Escribir.WriteLine($"Definición de función detectada: {tipoRetorno} {nombreFuncion}");
 
-            // Validar parámetros
-            if (!string.IsNullOrWhiteSpace(parametros))
+            if (string.IsNullOrWhiteSpace(parametros) || parametros.Trim() == "void")
             {
-                string[] listaParametros = parametros.Split(',');
+                return true;
+            }
 
-                foreach (string param in listaParametros)
+            string[] listaParametros = parametros.Split(',');
+
+            foreach (string param in listaParametros)
+            {
+                string p = param.Trim();
+
                 {
-                    string p = param.Trim();
-
                     var matchParam = Regex.Match(p,
-                        @"^(int|float|double|char|bool|string)\s+([A-Za-z_]\w*)$");
+                        @"^(int|float|double|char|bool|string|long|short)\s+([A-Za-z_]\w*)(\[\])?$");
 
                     if (!matchParam.Success)
                     {
                         ErrorSintactico($"Parámetro inválido en función '{nombreFuncion}': '{p}'");
+                        continue;
                     }
+                    string tipoParametro = matchParam.Groups[1].Value;
+                    string nombreParametro = matchParam.Groups[2].Value;
+                    if (Variables.ContainsKey(nombreParametro))
+                    {
+                        continue;
+                    }
+
+                    Variables.Add(nombreParametro, (tipoParametro, false, 0));
                 }
+
+              
             }
+
+            return true;
         }
-
-
-
-
 
     }
 }
+        
+
+
+
+
+
+    
+
