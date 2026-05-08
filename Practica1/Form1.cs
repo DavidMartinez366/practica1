@@ -29,7 +29,7 @@ namespace Practica1
         }
 
         private HashSet<int> LineasConExpresionAutonoma = new HashSet<int>();
-
+        private HashSet<int> LineasEcuaciones = new HashSet<int>();
         private enum TipoTokenExpresion
         {
             Identificador,
@@ -550,9 +550,10 @@ namespace Practica1
 
             string[] lineas = File.ReadAllLines(archivo);
             Variables.Clear();
-            LineasConExpresionAutonoma.Clear();
+            LineasEcuaciones.Clear();
 
-           
+
+
 
 
             DentroComentarioBloque = false;
@@ -627,6 +628,20 @@ namespace Practica1
                     if (nivelBloque < 0) nivelBloque = 0;
                 }
 
+                bool esEcuacionMatematica = EsEcuacionMatematica(lineaProcesable);
+
+                if (esEcuacionMatematica)
+                {
+                    LineasEcuaciones.Add(Numero_Linea);
+                    ValidarEcuacionMatematica(lineaProcesable);
+                }
+                else
+                {
+                    DetectarDeclaraciones(lineaProcesable);
+                    DetectarAsignacion(lineaProcesable);
+                    DetectarEstructuras(lineaProcesable);
+                }
+
                 if (EsExpresionAutonoma(lineaProcesable, nivelBloque))
                 {
                     LineasConExpresionAutonoma.Add(Numero_Linea);
@@ -645,7 +660,7 @@ namespace Practica1
                                            lineaProcesable.Contains("{") ||
                                            lineaProcesable.Contains("}");
 
-                if (!esEstructuraOBloque)
+                if (!esEstructuraOBloque && !esEcuacionMatematica)
                 {
                     ValidarSentenciaEnBloque(lineaProcesable, nivelBloque);
                 }
@@ -1113,8 +1128,8 @@ namespace Practica1
 
             string izquierda = linea.Substring(0, linea.IndexOf("=")).Trim();
             string derecha = linea.Substring(linea.IndexOf("=") + 1).Trim().TrimEnd(';').Trim();
+            bool expresionValida = ValidarSintaxisExpresionAsignacion(derecha, izquierda);
 
-      
 
 
             ResultadoAnalisisExpresion analisisExpresion = null;
@@ -1131,7 +1146,7 @@ namespace Practica1
 
             if (!Variables.ContainsKey(izquierda))
             {
-                ErrorTexto($"Asignación a variable no declarada '{izquierda}' en línea {Numero_Linea}.");
+                ErrorTexto($"Asignación a variable no declarada '{izquierda}'.");
                 return;
             }
 
@@ -1139,10 +1154,12 @@ namespace Practica1
 
             if (esArreglo)
             {
-                ErrorTexto($"No se puede asignar a un arreglo completo: '{izquierda}' en línea {Numero_Linea}.");
+                ErrorTexto($"No se puede asignar a un arreglo completo: '{izquierda}'.");
                 return;
             }
 
+            if (!expresionValida)
+                return;
             // Selección de tipo de análisis
             if (EsConstanteNumerica(derecha))
             {
@@ -1171,10 +1188,193 @@ namespace Practica1
             }
             else
             {
-                ErrorTexto($"Expresión no reconocida en la asignación de '{izquierda}' en línea {Numero_Linea}.");
+                ErrorTexto($"Expresión no reconocida en la asignación de '{izquierda}'.");
             }
 
         }
+
+        private bool ValidarSintaxisExpresionAsignacion(string expresion, string variableDestino)
+        {
+            if (string.IsNullOrWhiteSpace(expresion))
+            {
+                ErrorSintactico($"La asignación a '{variableDestino}' requiere una expresión a la derecha del '='.");
+                return false;
+            }
+
+            if (!ParentesisBalanceados(expresion))
+            {
+                ErrorSintactico($"La expresión asignada a '{variableDestino}' tiene paréntesis desbalanceados.");
+                return false;
+            }
+
+            List<string> tokens = TokenizarExpresion(expresion);
+            if (tokens.Count == 0)
+            {
+                ErrorSintactico($"La asignación a '{variableDestino}' requiere una expresión válida.");
+                return false;
+            }
+
+            bool esperaOperando = true;
+            int profundidad = 0;
+
+            foreach (string token in tokens)
+            {
+                if (token == "(")
+                {
+                    if (!esperaOperando)
+                    {
+                        ErrorSintactico($"Falta un operador antes de '(' en la asignación a '{variableDestino}'.");
+                        return false;
+                    }
+
+                    profundidad++;
+                    continue;
+                }
+
+                if (token == ")")
+                {
+                    if (esperaOperando)
+                    {
+                        ErrorSintactico($"Hay un operador sin operando antes de ')' en la asignación a '{variableDestino}'.");
+                        return false;
+                    }
+
+                    profundidad--;
+                    if (profundidad < 0)
+                    {
+                        ErrorSintactico($"La expresión asignada a '{variableDestino}' tiene un ')' sin apertura correspondiente.");
+                        return false;
+                    }
+
+                    esperaOperando = false;
+                    continue;
+                }
+
+                if (EsOperadorAritmetico(token))
+                {
+                    if (esperaOperando)
+                    {
+                        ErrorSintactico($"Operador '{token}' sin operando válido en la asignación a '{variableDestino}'.");
+                        return false;
+                    }
+
+                    esperaOperando = true;
+                    continue;
+                }
+
+                if (esperaOperando)
+                {
+                    esperaOperando = false;
+                }
+                else
+                {
+                    ErrorSintactico($"Falta un operador entre operandos en la asignación a '{variableDestino}'.");
+                    return false;
+                }
+            }
+
+            if (esperaOperando)
+            {
+                ErrorSintactico($"La expresión asignada a '{variableDestino}' termina con un operador incompleto.");
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool ParentesisBalanceados(string expresion)
+        {
+            int balance = 0;
+
+            foreach (char c in expresion)
+            {
+                if (c == '(')
+                    balance++;
+                else if (c == ')')
+                {
+                    balance--;
+                    if (balance < 0)
+                        return false;
+                }
+            }
+
+            return balance == 0;
+        }
+
+        private List<string> TokenizarExpresion(string expresion)
+        {
+            return Regex.Matches(expresion, @"[A-Za-z_]\w*|\d+(?:\.\d+)?|[()+\-*/]")
+                        .Cast<Match>()
+                        .Select(m => m.Value)
+                        .ToList();
+        }
+
+        private bool EsOperadorAritmetico(string token)
+        {
+            return token == "+" || token == "-" || token == "*" || token == "/";
+        }
+
+
+
+
+        private bool EsEcuacionMatematica(string linea)
+        {
+            if (string.IsNullOrWhiteSpace(linea))
+                return false;
+
+            if (linea.EndsWith(";"))
+                return false;
+
+            if (linea.Count(c => c == '=') != 1 || linea.Contains("==") || linea.Contains(">=") || linea.Contains("<=") || linea.Contains("!="))
+                return false;
+
+            int indiceIgual = linea.IndexOf('=');
+            if (indiceIgual <= 0 || indiceIgual >= linea.Length - 1)
+                return false;
+
+            string izquierda = linea.Substring(0, indiceIgual).Trim();
+            string derecha = linea.Substring(indiceIgual + 1).Trim();
+
+            return EsLadoEcuacionValido(izquierda) && EsLadoEcuacionValido(derecha);
+        }
+
+        private bool EsLadoEcuacionValido(string lado)
+        {
+            if (string.IsNullOrWhiteSpace(lado))
+                return false;
+
+            if (!Regex.IsMatch(lado, @"^[A-Za-z0-9_\+\-\*\/\(\)\.\s]+$"))
+                return false;
+
+            int balance = 0;
+            foreach (char c in lado)
+            {
+                if (c == '(') balance++;
+                if (c == ')') balance--;
+                if (balance < 0) return false;
+            }
+
+            return balance == 0;
+        }
+
+        private void ValidarEcuacionMatematica(string linea)
+        {
+            int indiceIgual = linea.IndexOf('=');
+            string izquierda = linea.Substring(0, indiceIgual).Trim();
+            string derecha = linea.Substring(indiceIgual + 1).Trim();
+
+            if (string.IsNullOrWhiteSpace(izquierda) || string.IsNullOrWhiteSpace(derecha))
+            {
+                ErrorSintactico("La ecuación matemática debe tener una expresión válida a ambos lados de '='.");
+                return;
+            }
+
+            if (!EsLadoEcuacionValido(izquierda) || !EsLadoEcuacionValido(derecha))
+            {
+                ErrorSintactico($"La ecuación matemática '{linea}' está mal formada.");
+            }
+        }
+
         private bool EsConstanteNumerica(string s)
         {
             return float.TryParse(s, out _);
@@ -1842,6 +2042,9 @@ namespace Practica1
 
             if (!P_Reservadas.Contains(token)) // no verificar palabras reservadas
             {
+                if (LineasEcuaciones.Contains(Numero_Linea))
+                    return;
+
                 // si el siguiente es '(' probablemente sea una llamada o definición de función
                 if (siguiente == '(') return;
 
