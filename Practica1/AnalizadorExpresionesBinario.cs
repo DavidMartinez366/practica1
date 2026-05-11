@@ -1,15 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace Practica1
 {
-    internal class AnalizadorExpresionesBinario
+    /// <summary>
+    /// Representa un árbol binario de expresión aritmética.
+    /// Su objetivo es documentar claramente el proceso de análisis léxico/sintáctico
+    /// que transforma una expresión infija (por ejemplo: "(3+4)*2")
+    /// en una estructura de nodos padre-hijo.
+    /// </summary>
+    public class ArbolExpresionBinaria
     {
-        internal class NodoExpresion
+        /// <summary>
+        /// Nodo base para cualquier elemento del árbol.
+        /// Un nodo puede ser operador (+,-,*,/) u operando (número o identificador).
+        /// </summary>
+        public class NodoExpresion
         {
             public string Valor { get; }
             public NodoExpresion Izquierdo { get; set; }
@@ -18,7 +26,7 @@ namespace Practica1
             /// <summary>
             /// Indica si el nodo almacena un operador binario.
             /// </summary>
-            public bool EsOperador => Valor == "+" || Valor == "-" || Valor == "*" || Valor == "/";
+            public bool EsOperador => EsTokenOperador(Valor);
 
             public NodoExpresion(string valor)
             {
@@ -47,7 +55,7 @@ namespace Practica1
             {
                 string token = postfija.Dequeue();
 
-                if (EsNumero(token))
+                if (EsOperando(token))
                 {
                     pilaNodos.Push(new NodoExpresion(token));
                     continue;
@@ -89,6 +97,44 @@ namespace Practica1
             }
 
             return RecorrerInorden(Raiz);
+        }
+
+        /// <summary>
+        /// Genera una representación textual del árbol para mostrarla en la salida
+        /// del analizador sin requerir controles gráficos adicionales.
+        /// </summary>
+        public string ObtenerArbolComoTexto()
+        {
+            if (Raiz == null)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            ConstruirArbolComoTexto(Raiz, string.Empty, true, "Raíz", sb);
+            return sb.ToString();
+        }
+
+        private static void ConstruirArbolComoTexto(NodoExpresion nodo, string prefijo, bool esUltimo, string etiqueta, StringBuilder sb)
+        {
+            if (nodo == null)
+            {
+                return;
+            }
+
+            sb.Append(prefijo)
+              .Append(esUltimo ? "└── " : "├── ")
+              .Append(etiqueta)
+              .Append(": ")
+              .AppendLine(nodo.Valor);
+
+            string nuevoPrefijo = prefijo + (esUltimo ? "    " : "│   ");
+
+            if (nodo.Izquierdo != null || nodo.Derecho != null)
+            {
+                ConstruirArbolComoTexto(nodo.Izquierdo, nuevoPrefijo, false, "Izq", sb);
+                ConstruirArbolComoTexto(nodo.Derecho, nuevoPrefijo, true, "Der", sb);
+            }
         }
 
         private static string RecorrerInorden(NodoExpresion nodo)
@@ -133,6 +179,18 @@ namespace Practica1
                     continue;
                 }
 
+                if (char.IsLetter(c) || c == '_')
+                {
+                    int inicio = i;
+                    i++;
+                    while (i < expresion.Length && (char.IsLetterOrDigit(expresion[i]) || expresion[i] == '_'))
+                    {
+                        i++;
+                    }
+                    tokens.Add(expresion.Substring(inicio, i - inicio));
+                    continue;
+                }
+
                 if ("+-*/()".IndexOf(c) >= 0)
                 {
                     tokens.Add(c.ToString());
@@ -153,7 +211,7 @@ namespace Practica1
 
             foreach (string token in tokens)
             {
-                if (EsNumero(token))
+                if (EsOperando(token))
                 {
                     salida.Enqueue(token);
                     continue;
@@ -178,6 +236,11 @@ namespace Practica1
                     }
 
                     continue;
+                }
+
+                if (!EsTokenOperador(token))
+                {
+                    throw new InvalidOperationException("Token no reconocido en la expresión: '" + token + "'.");
                 }
 
                 while (operadores.Count > 0 && operadores.Peek() != "(" &&
@@ -208,11 +271,42 @@ namespace Practica1
             return (operador == "*" || operador == "/") ? 2 : 1;
         }
 
+        private static bool EsOperando(string token)
+        {
+            return EsNumero(token) || EsIdentificador(token);
+        }
+
         private static bool EsNumero(string token)
         {
             return double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out _);
         }
+
+        private static bool EsIdentificador(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return false;
+            }
+
+            if (!char.IsLetter(token[0]) && token[0] != '_')
+            {
+                return false;
+            }
+
+            for (int i = 1; i < token.Length; i++)
+            {
+                if (!char.IsLetterOrDigit(token[i]) && token[i] != '_')
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool EsTokenOperador(string token)
+        {
+            return token == "+" || token == "-" || token == "*" || token == "/";
+        }
     }
 }
-    
-

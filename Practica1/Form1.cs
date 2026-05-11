@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
+using Practica1;
 
 namespace Practica1
 {
@@ -621,6 +622,13 @@ namespace Practica1
                     continue;
                 }
 
+                if (IntentarAnalizarExpresionAritmeticaIndependiente(lineaProcesable))
+                {
+                    Numero_Linea++;
+                    continue;
+                }
+
+
                 int numClose = CountCharOutsideStrings(lineaProcesable, '}');
                 if (numClose > 0)
                 {
@@ -931,6 +939,56 @@ namespace Practica1
             // Verificar uso de variable: sólo si no es palabra reservada y no es función
             char siguiente = (i_caracter == -1) ? '\0' : (char)i_caracter;
             VerificarUsoVariable(token, siguiente);
+        }
+
+        private bool IntentarAnalizarExpresionAritmeticaIndependiente(string linea)
+        {
+            string expresion = linea.Trim();
+
+            if (expresion.EndsWith(";"))
+            {
+                expresion = expresion.Substring(0, expresion.Length - 1).Trim();
+            }
+
+            if (!PareceExpresionAritmeticaIndependiente(expresion))
+            {
+                return false;
+            }
+
+            try
+            {
+                Practica1.ArbolExpresionBinaria arbol = new Practica1.ArbolExpresionBinaria();
+                arbol.ConstruirDesdeInfija(expresion);
+
+                Rtbx_salida.AppendText("===== ÁRBOL BINARIO DE EXPRESIÓN =====" + Environment.NewLine);
+                Rtbx_salida.AppendText("Línea: " + Numero_Linea + Environment.NewLine);
+                Rtbx_salida.AppendText("Expresión infija: " + expresion + Environment.NewLine);
+                Rtbx_salida.AppendText("Inorden parentizado: " + arbol.ObtenerInordenParentizado() + Environment.NewLine);
+                Rtbx_salida.AppendText(arbol.ObtenerArbolComoTexto());
+                Rtbx_salida.AppendText(Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                ErrorSintactico("Expresión aritmética inválida: " + ex.Message);
+            }
+
+            return true;
+        }
+
+        private bool PareceExpresionAritmeticaIndependiente(string expresion)
+        {
+            if (string.IsNullOrWhiteSpace(expresion))
+            {
+                return false;
+            }
+
+            if (!Regex.IsMatch(expresion, @"^[0-9A-Za-z_+\-*/().\s]+$"))
+            {
+                return false;
+            }
+
+            return Regex.IsMatch(expresion, @"[+\-*/]") &&
+                   Regex.IsMatch(expresion, @"[0-9A-Za-z_]");
         }
 
         private void Numero()
@@ -1862,6 +1920,7 @@ namespace Practica1
                 return;
             }
 
+
             // Extrae contenido
             string contenido = linea.Substring(idxInicio + 1, idxFin - idxInicio - 1).Trim();
 
@@ -1916,6 +1975,9 @@ namespace Practica1
                 ValidarEstructurasControl(linea);
                 return;
             }
+
+            if (IntentarAnalizarExpresionAritmeticaIndependiente(linea))
+                return;
 
             // Detectar cabecera/definición de función y registrar parámetros para el análisis semántico.
             if (linea.Contains("(") && (linea.EndsWith(")") || linea.EndsWith("{")))
