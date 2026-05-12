@@ -33,6 +33,21 @@ namespace Practica1
                 Valor = valor;
             }
         }
+        public class ResultadoEvaluacion
+        {
+            public bool SePuedeEvaluar { get; set; }
+            public double Valor { get; set; }
+            public List<string> Correspondencias { get; } = new List<string>();
+            public List<string> VariablesUsadas { get; } = new List<string>();
+            public string Error { get; set; }
+        }
+
+        private class ValorSubexpresion
+        {
+            public double Valor { get; set; }
+            public string Expresion { get; set; }
+        }
+
 
         public NodoExpresion Raiz { get; private set; }
 
@@ -97,6 +112,147 @@ namespace Practica1
             }
 
             return RecorrerInorden(Raiz);
+        }
+
+        public double Evaluar(IReadOnlyDictionary<string, double> valoresVariables)
+        {
+            if (Raiz == null)
+            {
+                throw new InvalidOperationException("Primero debe construirse el árbol de expresión.");
+            }
+
+            return EvaluarNodo(Raiz, valoresVariables ?? new Dictionary<string, double>());
+        }
+
+        public ResultadoEvaluacion Evaluar(Dictionary<string, double> valoresVariables = null)
+        {
+            ResultadoEvaluacion resultado = new ResultadoEvaluacion();
+
+            if (Raiz == null)
+            {
+                resultado.Error = "El árbol aún no ha sido construido.";
+                return resultado;
+            }
+
+            valoresVariables = valoresVariables ?? new Dictionary<string, double>();
+
+            try
+            {
+                ValorSubexpresion valorRaiz = EvaluarNodo(Raiz, valoresVariables, resultado);
+                resultado.Valor = valorRaiz.Valor;
+                resultado.SePuedeEvaluar = true;
+            }
+            catch (InvalidOperationException ex)
+            {
+                resultado.Error = ex.Message;
+                resultado.SePuedeEvaluar = false;
+            }
+
+            return resultado;
+        }
+        private static double EvaluarNodo(NodoExpresion nodo, IReadOnlyDictionary<string, double> valoresVariables)
+        {
+            if (nodo == null)
+            {
+                throw new InvalidOperationException("Nodo de expresión inválido.");
+            }
+
+            if (!nodo.EsOperador)
+            {
+                if (double.TryParse(nodo.Valor, NumberStyles.Float, CultureInfo.InvariantCulture, out double numero))
+                {
+                    return numero;
+                }
+
+                if (valoresVariables.TryGetValue(nodo.Valor, out double valorVariable))
+                {
+                    return valorVariable;
+                }
+
+                throw new InvalidOperationException("No se conoce el valor de la variable '" + nodo.Valor + "'.");
+            }
+
+            double izquierdo = EvaluarNodo(nodo.Izquierdo, valoresVariables);
+            double derecho = EvaluarNodo(nodo.Derecho, valoresVariables);
+
+            switch (nodo.Valor)
+            {
+                case "+":
+                    return izquierdo + derecho;
+                case "-":
+                    return izquierdo - derecho;
+                case "*":
+                    return izquierdo * derecho;
+                case "/":
+                    if (derecho == 0)
+                    {
+                        throw new DivideByZeroException("División entre cero al evaluar la expresión.");
+                    }
+                    return izquierdo / derecho;
+                default:
+                    throw new InvalidOperationException("Operador no soportado: '" + nodo.Valor + "'.");
+            }
+        }
+
+        private static ValorSubexpresion EvaluarNodo(NodoExpresion nodo, Dictionary<string, double> valoresVariables, ResultadoEvaluacion resultado)
+        {
+            if (nodo == null)
+            {
+                throw new InvalidOperationException("No se puede evaluar un nodo vacío.");
+            }
+
+            if (!nodo.EsOperador)
+            {
+                if (double.TryParse(nodo.Valor, NumberStyles.Float, CultureInfo.InvariantCulture, out double numero))
+                {
+                    return new ValorSubexpresion { Valor = numero, Expresion = nodo.Valor };
+                }
+
+                if (valoresVariables.TryGetValue(nodo.Valor, out double valorVariable))
+                {
+                    resultado.VariablesUsadas.Add(nodo.Valor + " = " + FormatearNumero(valorVariable));
+                    return new ValorSubexpresion { Valor = valorVariable, Expresion = nodo.Valor };
+                }
+
+                throw new InvalidOperationException("No se conoce un valor numérico para el identificador '" + nodo.Valor + "'.");
+            }
+
+            ValorSubexpresion izquierdo = EvaluarNodo(nodo.Izquierdo, valoresVariables, resultado);
+            ValorSubexpresion derecho = EvaluarNodo(nodo.Derecho, valoresVariables, resultado);
+            double valor;
+
+            switch (nodo.Valor)
+            {
+                case "+":
+                    valor = izquierdo.Valor + derecho.Valor;
+                    break;
+                case "-":
+                    valor = izquierdo.Valor - derecho.Valor;
+                    break;
+                case "*":
+                    valor = izquierdo.Valor * derecho.Valor;
+                    break;
+                case "/":
+                    if (Math.Abs(derecho.Valor) < double.Epsilon)
+                    {
+                        throw new InvalidOperationException("No se puede dividir entre cero en la subexpresión '" + derecho.Expresion + "'.");
+                    }
+
+                    valor = izquierdo.Valor / derecho.Valor;
+                    break;
+                default:
+                    throw new InvalidOperationException("Operador no soportado para evaluación: '" + nodo.Valor + "'.");
+            }
+
+            string expresion = "(" + izquierdo.Expresion + " " + nodo.Valor + " " + derecho.Expresion + ")";
+            resultado.Correspondencias.Add(expresion + " = " + FormatearNumero(valor));
+
+            return new ValorSubexpresion { Valor = valor, Expresion = expresion };
+        }
+
+        private static string FormatearNumero(double valor)
+        {
+            return valor.ToString("0.######", CultureInfo.InvariantCulture);
         }
 
         /// <summary>

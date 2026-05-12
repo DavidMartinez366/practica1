@@ -2,9 +2,10 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
-using System.Windows.Forms;
+using System.Windows.Forms; 
 using Practica1;
 
 namespace Practica1
@@ -379,7 +380,7 @@ namespace Practica1
 
         // Tabla de variables globales
         private Dictionary<string, (string tipo, bool esArreglo, int tam)> Variables = new Dictionary<string, (string, bool, int)>();
-
+        private Dictionary<string, double> ValoresNumericos = new Dictionary<string, double>();
         private HashSet<string> FuncionesDeclaradas = new HashSet<string>();
         private List<string> TiposValidos = new List<string>
         {
@@ -551,6 +552,7 @@ namespace Practica1
 
             string[] lineas = File.ReadAllLines(archivo);
             Variables.Clear();
+            ValoresNumericos.Clear();
             LineasEcuaciones.Clear();
 
 
@@ -643,12 +645,7 @@ namespace Practica1
                     LineasEcuaciones.Add(Numero_Linea);
                     ValidarEcuacionMatematica(lineaProcesable);
                 }
-                else
-                {
-                    DetectarDeclaraciones(lineaProcesable);
-                    DetectarAsignacion(lineaProcesable);
-                    DetectarEstructuras(lineaProcesable);
-                }
+                
 
                 if (EsExpresionAutonoma(lineaProcesable, nivelBloque))
                 {
@@ -960,10 +957,22 @@ namespace Practica1
                 Practica1.ArbolExpresionBinaria arbol = new Practica1.ArbolExpresionBinaria();
                 arbol.ConstruirDesdeInfija(expresion);
 
+                Dictionary<string, double> valoresVariables = ObtenerValoresNumericosHastaLinea(Numero_Linea);
+                Practica1.ArbolExpresionBinaria.ResultadoEvaluacion evaluacion = arbol.Evaluar(valoresVariables);
+
                 Rtbx_salida.AppendText("===== ÁRBOL BINARIO DE EXPRESIÓN =====" + Environment.NewLine);
                 Rtbx_salida.AppendText("Línea: " + Numero_Linea + Environment.NewLine);
                 Rtbx_salida.AppendText("Expresión infija: " + expresion + Environment.NewLine);
                 Rtbx_salida.AppendText("Inorden parentizado: " + arbol.ObtenerInordenParentizado() + Environment.NewLine);
+                if (IntentarEvaluarExpresionNumerica(expresion, out double resultado, out string errorEvaluacion))
+                {
+                    Rtbx_salida.AppendText("Resultado: " + FormatearNumero(resultado) + Environment.NewLine);
+                }
+                else
+                {
+                    Rtbx_salida.AppendText("Resultado: no calculado (" + errorEvaluacion + ")" + Environment.NewLine);
+                }
+                AgregarResultadoYCorrespondencia(expresion, evaluacion);
                 Rtbx_salida.AppendText(arbol.ObtenerArbolComoTexto());
                 Rtbx_salida.AppendText(Environment.NewLine);
             }
@@ -973,6 +982,114 @@ namespace Practica1
             }
 
             return true;
+        }
+
+        private void AgregarResultadoYCorrespondencia(string expresion, Practica1.ArbolExpresionBinaria.ResultadoEvaluacion evaluacion)
+        {
+            if (evaluacion.SePuedeEvaluar)
+            {
+                string resultado = FormatearResultadoNumerico(evaluacion.Valor);
+                Rtbx_salida.AppendText("Resultado de la expresión: " + resultado + Environment.NewLine);
+
+                var variablesUnicas = evaluacion.VariablesUsadas.Distinct().ToList();
+                if (variablesUnicas.Count > 0)
+                {
+                    Rtbx_salida.AppendText("Valores usados: " + string.Join(", ", variablesUnicas) + Environment.NewLine);
+                }
+
+                Rtbx_salida.AppendText("Correspondencia del resultado:" + Environment.NewLine);
+                if (evaluacion.Correspondencias.Count == 0)
+                {
+                    Rtbx_salida.AppendText("  " + expresion + " = " + resultado + Environment.NewLine);
+                }
+                else
+                {
+                    foreach (string correspondencia in evaluacion.Correspondencias)
+                    {
+                        Rtbx_salida.AppendText("  " + correspondencia + Environment.NewLine);
+                    }
+                }
+            }
+            else
+            {
+                Rtbx_salida.AppendText("Resultado de la expresión: no evaluable" + Environment.NewLine);
+                Rtbx_salida.AppendText("Motivo: " + evaluacion.Error + Environment.NewLine);
+            }
+        }
+
+        private Dictionary<string, double> ObtenerValoresNumericosHastaLinea(int lineaLimite)
+        {
+            Dictionary<string, double> valores = new Dictionary<string, double>();
+            string[] lineas = richTextBox1.Text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+            for (int i = 0; i < lineas.Length && i + 1 < lineaLimite; i++)
+            {
+                string linea = LimpiarLineaParaTabla(lineas[i]);
+                if (string.IsNullOrWhiteSpace(linea))
+                {
+                    continue;
+                }
+
+                RegistrarValoresDeclaracionNumerica(linea, valores);
+                RegistrarValorAsignacionNumerica(linea, valores);
+            }
+
+            return valores;
+        }
+
+        private void RegistrarValoresDeclaracionNumerica(string linea, Dictionary<string, double> valores)
+        {
+            Match declaracion = Regex.Match(linea, @"^(?<tipo>int|float|double|long|short)\s+(?<resto>[^;]+);$");
+            if (!declaracion.Success)
+            {
+                return;
+            }
+
+            foreach (string parte in declaracion.Groups["resto"].Value.Split(','))
+            {
+                Match variable = Regex.Match(parte.Trim(), @"^(?<nombre>[A-Za-z_]\w*)\s*=\s*(?<valor>.+)$");
+                if (!variable.Success)
+                {
+                    continue;
+                }
+
+                IntentarGuardarValorNumerico(variable.Groups["nombre"].Value, variable.Groups["valor"].Value, valores);
+            }
+        }
+
+        private void RegistrarValorAsignacionNumerica(string linea, Dictionary<string, double> valores)
+        {
+            Match asignacion = Regex.Match(linea, @"^(?<nombre>[A-Za-z_]\w*)\s*=\s*(?<valor>[^;]+);$");
+            if (!asignacion.Success)
+            {
+                return;
+            }
+
+            IntentarGuardarValorNumerico(asignacion.Groups["nombre"].Value, asignacion.Groups["valor"].Value, valores);
+        }
+
+        private void IntentarGuardarValorNumerico(string nombre, string expresion, Dictionary<string, double> valores)
+        {
+            try
+            {
+                Practica1.ArbolExpresionBinaria arbol = new Practica1.ArbolExpresionBinaria();
+                arbol.ConstruirDesdeInfija(expresion);
+                Practica1.ArbolExpresionBinaria.ResultadoEvaluacion evaluacion = arbol.Evaluar(valores);
+
+                if (evaluacion.SePuedeEvaluar)
+                {
+                    valores[nombre] = evaluacion.Valor;
+                }
+            }
+            catch
+            {
+                // Si la asignación no es una expresión aritmética simple, se omite para no duplicar errores del analizador principal.
+            }
+        }
+
+        private string FormatearResultadoNumerico(double valor)
+        {
+            return valor.ToString("0.######", CultureInfo.InvariantCulture);
         }
 
         private bool PareceExpresionAritmeticaIndependiente(string expresion)
@@ -1222,6 +1339,7 @@ namespace Practica1
             if (EsConstanteNumerica(derecha))
             {
                 ValidarConstanteNumerica(tipo, derecha);
+                RegistrarResultadoAsignacionNumerica(izquierda, derecha);
             }
             else if (EsCadena(derecha))
             {
@@ -1235,6 +1353,7 @@ namespace Practica1
             else if (EsExpresionAritmetica(derecha))
             {
                 ValidarExpresionAritmetica(tipo, derecha);
+                RegistrarResultadoAsignacionNumerica(izquierda, derecha);
             }
             else if (EsExpresionLogica(derecha))
             {
@@ -1249,6 +1368,46 @@ namespace Practica1
                 ErrorTexto($"Expresión no reconocida en la asignación de '{izquierda}'.");
             }
 
+        }
+        private void RegistrarResultadoAsignacionNumerica(string variableDestino, string expresion)
+        {
+            if (!IntentarEvaluarExpresionNumerica(expresion, out double resultado, out string error))
+            {
+                ErrorSemantico($"No se pudo calcular el resultado de '{variableDestino}': {error}");
+                return;
+            }
+
+            ValoresNumericos[variableDestino] = resultado;
+
+            Rtbx_salida.AppendText("===== RESULTADO DE EXPRESIÓN =====" + Environment.NewLine);
+            Rtbx_salida.AppendText("Línea: " + Numero_Linea + Environment.NewLine);
+            Rtbx_salida.AppendText("Asignación: " + variableDestino + " = " + expresion + Environment.NewLine);
+            Rtbx_salida.AppendText("Resultado: " + variableDestino + " = " + FormatearNumero(resultado) + Environment.NewLine);
+            Rtbx_salida.AppendText(Environment.NewLine);
+        }
+
+        private bool IntentarEvaluarExpresionNumerica(string expresion, out double resultado, out string error)
+        {
+            resultado = 0;
+            error = null;
+
+            try
+            {
+                Practica1.ArbolExpresionBinaria arbol = new Practica1.ArbolExpresionBinaria();
+                arbol.ConstruirDesdeInfija(expresion);
+            
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static string FormatearNumero(double numero)
+        {
+            return numero.ToString("0.##########", CultureInfo.InvariantCulture);
         }
 
         private bool ValidarSintaxisExpresionAsignacion(string expresion, string variableDestino)
@@ -1430,6 +1589,75 @@ namespace Practica1
             if (!EsLadoEcuacionValido(izquierda) || !EsLadoEcuacionValido(derecha))
             {
                 ErrorSintactico($"La ecuación matemática '{linea}' está mal formada.");
+
+                return;
+            }
+
+            MostrarResultadoEcuacionMatematica(izquierda, derecha);
+        }
+
+        private void MostrarResultadoEcuacionMatematica(string izquierda, string derecha)
+        {
+            try
+            {
+                Dictionary<string, double> valoresVariables = ObtenerValoresNumericosHastaLinea(Numero_Linea);
+                Practica1.ArbolExpresionBinaria arbolIzquierdo = new Practica1.ArbolExpresionBinaria();
+                Practica1.ArbolExpresionBinaria arbolDerecho = new Practica1.ArbolExpresionBinaria();
+
+                arbolIzquierdo.ConstruirDesdeInfija(izquierda);
+                arbolDerecho.ConstruirDesdeInfija(derecha);
+
+                Practica1.ArbolExpresionBinaria.ResultadoEvaluacion evaluacionIzquierda = arbolIzquierdo.Evaluar(valoresVariables);
+                Practica1.ArbolExpresionBinaria.ResultadoEvaluacion evaluacionDerecha = arbolDerecho.Evaluar(valoresVariables);
+
+                Rtbx_salida.AppendText("===== RESULTADO DE ECUACIÓN MATEMÁTICA =====" + Environment.NewLine);
+                Rtbx_salida.AppendText("Línea: " + Numero_Linea + Environment.NewLine);
+                Rtbx_salida.AppendText("Ecuación: " + izquierda + " = " + derecha + Environment.NewLine);
+
+                if (!evaluacionIzquierda.SePuedeEvaluar || !evaluacionDerecha.SePuedeEvaluar)
+                {
+                    Rtbx_salida.AppendText("Resultado: no evaluable" + Environment.NewLine);
+                    if (!evaluacionIzquierda.SePuedeEvaluar)
+                    {
+                        Rtbx_salida.AppendText("Lado izquierdo: " + evaluacionIzquierda.Error + Environment.NewLine);
+                    }
+                    if (!evaluacionDerecha.SePuedeEvaluar)
+                    {
+                        Rtbx_salida.AppendText("Lado derecho: " + evaluacionDerecha.Error + Environment.NewLine);
+                    }
+                    return;
+                }
+
+                string resultadoIzquierdo = FormatearResultadoNumerico(evaluacionIzquierda.Valor);
+                string resultadoDerecho = FormatearResultadoNumerico(evaluacionDerecha.Valor);
+                bool corresponde = Math.Abs(evaluacionIzquierda.Valor - evaluacionDerecha.Valor) < 0.000001;
+
+                Rtbx_salida.AppendText("Resultado lado izquierdo: " + resultadoIzquierdo + Environment.NewLine);
+                Rtbx_salida.AppendText("Resultado lado derecho: " + resultadoDerecho + Environment.NewLine);
+                AgregarCorrespondenciasDeLado("Correspondencia lado izquierdo", izquierda, evaluacionIzquierda);
+                AgregarCorrespondenciasDeLado("Correspondencia lado derecho", derecha, evaluacionDerecha);
+                Rtbx_salida.AppendText("Correspondencia: " + (corresponde ? "sí corresponde" : "no corresponde") + Environment.NewLine);
+                Rtbx_salida.AppendText("Comparación: " + resultadoIzquierdo + " = " + resultadoDerecho + " -> " + (corresponde ? "verdadero" : "falso") + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                ErrorSintactico("No se pudo evaluar la ecuación matemática: " + ex.Message);
+            }
+        }
+
+        private void AgregarCorrespondenciasDeLado(string titulo, string expresion, Practica1.ArbolExpresionBinaria.ResultadoEvaluacion evaluacion)
+        {
+            Rtbx_salida.AppendText(titulo + ":" + Environment.NewLine);
+
+            if (evaluacion.Correspondencias.Count == 0)
+            {
+                Rtbx_salida.AppendText("  " + expresion + " = " + FormatearResultadoNumerico(evaluacion.Valor) + Environment.NewLine);
+                return;
+            }
+
+            foreach (string correspondencia in evaluacion.Correspondencias)
+            {
+                Rtbx_salida.AppendText("  " + correspondencia + Environment.NewLine);
             }
         }
 
@@ -2071,13 +2299,13 @@ namespace Practica1
                     }
                     else
                     {
-                        string declaracion = resto.Split('=')[0].Trim().TrimEnd(';');
-
-                        string[] nombres = declaracion.Split(',');
-
-                        foreach (string nom in nombres)
+                        string declaracionCompleta = resto.Trim().TrimEnd(';');
+                        string[] declaraciones = declaracionCompleta.Split(',');
+                        foreach (string declaracionIndividual in declaraciones)
                         {
-                            string nombre = nom.Trim();
+                            string[] partesDeclaracion = declaracionIndividual.Split(new[] { '=' }, 2);
+                            string nombre = partesDeclaracion[0].Trim();
+                            string valorInicial = partesDeclaracion.Length > 1 ? partesDeclaracion[1].Trim() : string.Empty;
 
                             if (Variables.ContainsKey(nombre))
                             {
@@ -2087,6 +2315,18 @@ namespace Practica1
                             {
                                 Variables.Add(nombre, (tipo, false, 0));
                                 Escribir.WriteLine($"Declaración: Variable {tipo} {nombre}");
+
+                                if (!string.IsNullOrWhiteSpace(valorInicial) && EsExpresionAritmetica(valorInicial))
+                                {
+                                    if (IntentarEvaluarExpresionNumerica(valorInicial, out double resultadoInicial, out string errorEvaluacion))
+                                    {
+                                        ValoresNumericos[nombre] = resultadoInicial;
+                                    }
+                                    else
+                                    {
+                                        ErrorSemantico($"No se pudo calcular el valor inicial de '{nombre}': {errorEvaluacion}");
+                                    }
+                                }
                             }
                         }
                     }
